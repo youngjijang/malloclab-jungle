@@ -216,7 +216,7 @@ void mm_free(void *ptr)
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  */
-void *mm_realloc(void *ptr, size_t size)
+void *mm_realloc(void *ptr, size_t size) //이미 할당된 포인터 변수, 바꾸고 싶은 크기
 {
     void *newptr;
     size_t oldSize;
@@ -225,21 +225,20 @@ void *mm_realloc(void *ptr, size_t size)
         mm_free(ptr);
         return 0;
     }
-    if(ptr == NULL){
+    if(ptr == NULL){ //주소가 없으면 새로운데 할당?
         return mm_malloc(size);
     }
-    newptr = mm_malloc(size);
 
+    newptr = mm_malloc(size); 
     if (!newptr)
       return 0;
 
     // copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
-    oldSize = GET_SIZE(HDRP(ptr));
-    if (size < oldSize)
-      oldSize = size;
-    memcpy(newptr, ptr, oldSize);
+    oldSize = GET_SIZE(HDRP(ptr)); //변경된 최소 사이즈
+    if (size < oldSize) 
+      oldSize = size; //사이즈를 축소하고싶으면 자르기
 
-    mm_free(ptr);
-
+    memcpy(newptr, ptr, oldSize); //메모리 복사(복사받을,복사할,복사할크기)
+    mm_free(ptr); 
     return newptr;
 }
