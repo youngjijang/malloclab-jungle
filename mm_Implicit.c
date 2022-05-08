@@ -56,15 +56,7 @@ team_t team = {
 #define NEXT_BLKP(bp) ((char*)(bp) + GET_SIZE(((char*)(bp) - WSIZE)))
 #define PREV_BLKP(bp) ((char*)(bp) - GET_SIZE(((char*)(bp) - DSIZE))) //괄호 주의
 
-#define PREC_FREEP(bp) (*(void**)(bp)) //*(GET(PREC_FREEP(bp))) == preducessor
-#define SUCC_FREEP(bp) (*(void**)(bp + WSIZE)) //*(GET(SUCC_FREEP(bp))) == successor
-
 static char *heap_listp; /* 처음 쓸 큰 가용블럭 힙을 만들어준다.*/
-static char *free_listp; /* 가용리스트의 첫번째 주소를 저장*/
-
-void removeBlock(void *bp);
-void putFreeBlock(void *bp);
-
 
 /*
 * 연결
@@ -121,17 +113,13 @@ static void *extend_heap(size_t words){ //static void 리턴 뭐야
  */
 int mm_init(void)
 {
-    if ((heap_listp = mem_sbrk(6*WSIZE)) == (void*)-1)
+    if ((heap_listp = mem_sbrk(4*WSIZE)) == (void*)-1)
         return -1;
     PUT(heap_listp,0);
-    PUT(heap_listp + (1*WSIZE),PACK(DSIZE*4,1));/* 프롤로그 헤더*/
-    PUT(heap_listp + (2*WSIZE),NULL);/* 연결리스트 끝점 pre*/
-    PUT(heap_listp + (3*WSIZE),NULL);/* 연결리스트 끝점 suc = 항상 NULL*/
-    PUT(heap_listp + (4*WSIZE),PACK(DSIZE*4,1));/* 프롤로그 푸터*/
-    PUT(heap_listp + (5*WSIZE),PACK(0,1));/* 에필로그 헤더*/
-    
-    heap_listp += (4*WSIZE); //프롤로그 푸터 앞에 왜??
-    free_listp = heap_listp + DSIZE; //가용리스트 첫번째
+    PUT(heap_listp + (1*WSIZE),PACK(DSIZE,1));/* 프롤로그 헤더*/
+    PUT(heap_listp + (2*WSIZE),PACK(DSIZE,1));/* 프롤로그 푸터*/
+    PUT(heap_listp + (3*WSIZE),PACK(0,1));/* 에필로그 헤더*/
+    heap_listp += (2*WSIZE);
 
     if(extend_heap(CHUNKSIZE/WSIZE) == NULL)
         return -1;
@@ -215,30 +203,6 @@ void mm_free(void *ptr)
     PUT(HDRP(ptr),PACK(size,0));
     PUT(FTRP(ptr),PACK(size,0));
     coalesce(ptr);
-}
-
-/**
- * 가용 블럭 제거
- */
-void removeBlock(void *bp){ 
-
-    if(bp == free_listp){
-        PREC_FREEP(SUCC_FREEP(bp)) = NULL;
-        free_listp = SUCC_FREEP(bp);
-    }else{
-        SUCC_FREEP(PREC_FREEP(bp)) = SUCC_FREEP(bp);
-        PREC_FREEP(SUCC_FREEP(bp)) = PREC_FREEP(bp);
-    }    
-}
-
-/*
-* 새로 생성된 가용블럭을 가용리스트 맨 앞에 추가해주기
-*/
-void putFreeBlock(void *bp){
-    PREC_FREEP(free_listp) = bp;
-    PREC_FREEP(bp) = NULL;
-    SUCC_FREEP(bp) = free_listp;
-    free_listp = bp;
 }
 
 /*
