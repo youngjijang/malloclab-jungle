@@ -56,7 +56,18 @@ team_t team = {
 #define NEXT_BLKP(bp) ((char*)(bp) + GET_SIZE(((char*)(bp) - WSIZE)))
 #define PREV_BLKP(bp) ((char*)(bp) - GET_SIZE(((char*)(bp) - DSIZE))) //괄호 주의
 
+#define PRED(bp) ((char*)(bp)) //그냥 bp,,?
+#define SUCC(bp) ((char*)(bp) + WSIZE) //다음 블록 주소?
+
+//블록 최소 크기인 2**4부터 최대 크기인 2**32를 위한 리스트 29개
+#define LIST_NUM 29
+
 static char *heap_listp; /* 처음 쓸 큰 가용블럭 힙을 만들어준다.*/
+void *seg_list[LIST_NUM]; //연결리스트 집합  
+
+void delete_block(char* bp);
+void add_free_block(char* bp);
+int get_seg_list_num(size_t size); //stack에 저장????
 
 /*
 * 연결
@@ -67,26 +78,33 @@ static void *coalesce(void *bp){
     size_t size = GET_SIZE(HDRP(bp));
 
     if(prev_alloc && next_alloc){ /* case 1 */
+        add_free_block(bp);
         return bp;  
     }
     else if (prev_alloc && !next_alloc){ /* case 2 */
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
+
+        delete_block(NEXT_BLKP(bp));
         PUT(HDRP(bp),PACK(size,0));
         PUT(FTRP(bp),PACK(size,0)); //푸터 안바꾸나?
     }
     else if (!prev_alloc && next_alloc){ /* case 3 */
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
+        delete_block(PREV_BLKP(bp));
         PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
         PUT(FTRP(bp),PACK(size,0));
         bp = PREV_BLKP(bp);
     }
     else{ /* case 4 */
         size += GET_SIZE(HDRP(PREV_BLKP(bp)))+GET_SIZE(FTRP(NEXT_BLKP(bp)));
+        delete_block(NEXT_BLKP(bp));
+        delete_block(PREV_BLKP(bp));
         PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
         PUT(FTRP(NEXT_BLKP(bp)),PACK(size,0));
         bp = PREV_BLKP(bp);
     }
 
+    add_free_block(bp);
     return bp;
 }
 
@@ -97,12 +115,13 @@ static void *extend_heap(size_t words){ //static void 리턴 뭐야
     char *bp;
     size_t size;
 
-    size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE;
+    size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE; //DSIZE하면 2점-
     if ((long)(bp = mem_sbrk(size)) == -1)
         return NULL;
 
     PUT(HDRP(bp),PACK(size,0));
     PUT(FTRP(bp),PACK(size,0));
+    
     PUT(HDRP(NEXT_BLKP(bp)),PACK(0,1));
 
     return coalesce(bp);
@@ -113,13 +132,20 @@ static void *extend_heap(size_t words){ //static void 리턴 뭐야
  */
 int mm_init(void)
 {
+    //각 분리가용 리스트를 초기화
+    for(int i = 0; i <LIST_NUM; i++){
+        seg_list[i] = NULL;
+    }
+    
     if ((heap_listp = mem_sbrk(4*WSIZE)) == (void*)-1)
         return -1;
+
     PUT(heap_listp,0);
     PUT(heap_listp + (1*WSIZE),PACK(DSIZE,1));/* 프롤로그 헤더*/
     PUT(heap_listp + (2*WSIZE),PACK(DSIZE,1));/* 프롤로그 푸터*/
     PUT(heap_listp + (3*WSIZE),PACK(0,1));/* 에필로그 헤더*/
-    heap_listp += (2*WSIZE);
+    
+    // heap_listp += (4*WSIZE);
 
     if(extend_heap(CHUNKSIZE/WSIZE) == NULL)
         return -1;
@@ -128,18 +154,46 @@ int mm_init(void)
 
 static void *find_fit(size_t asize){
     void *bp;
+    int i = get_seg_list_num(asize); //알맞은 segsize 찾기
 
-    for(bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)){
-        if(!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))){
-            return bp;
+    //리스트 내부의 블록들중 가장 작은 블록 할당(best fit)
+    void *tmp = NULL;
+    while (i < LIST_NUM){
+        //first fit
+        for(bp = seg_list[i]; bp != NULL; bp = GET(SUCC(bp))){
+            if(asize <= GET_SIZE(HDRP(bp))){
+                tmp = bp;
+            }
         }
+
+        // for(bp = seg_list[i]; bp != NULL; bp = GET(SUCC(bp))){
+        //     if(asize <= GET_SIZE(HDRP(bp))){
+        //         if (tmp == NULL){
+        //             tmp = bp;
+        //         }else{
+        //             if(GET_SIZE(tmp) > GET_SIZE(HDRP(bp))){
+        //                 tmp = bp;
+        //             }
+        //         } 
+        //     }
+        // }
+        if (tmp != NULL){
+            return tmp;
+        }    
+        i++; //해당 seg_list가 null일 경우 다음 리스트 검색?
     }
     return NULL;
 // #endif 뭐야넌
 }
 
-static void place(void *bp, size_t asize){
+static void place(void *bp, size_t asize){ //가용리스트 주소, 할당할 양
+
+    delete_block(bp);
+
     size_t csize = GET_SIZE(HDRP(bp));
+
+    // PUT(HDRP(bp), PACK(csize,1));
+    // PUT(FTRP(bp), PACK(csize,1));
 
     if((csize - asize) >= (2*DSIZE)){
         PUT(HDRP(bp),PACK(asize,1));
@@ -147,6 +201,8 @@ static void place(void *bp, size_t asize){
         bp = NEXT_BLKP(bp);
         PUT(HDRP(bp), PACK(csize-asize,0));
         PUT(FTRP(bp), PACK(csize-asize,0));
+
+        coalesce(bp);
     }
     else{
         PUT(HDRP(bp), PACK(csize,1));
@@ -160,14 +216,6 @@ static void place(void *bp, size_t asize){
  */
 void *mm_malloc(size_t size)
 {
-    // int newsize = ALIGN(size + SIZE_T_SIZE);
-    // void *p = mem_sbrk(newsize);
-    // if (p == (void *)-1)
-	// return NULL;
-    // else {
-    //     *(size_t *)p = size;
-    //     return (void *)((char *)p + SIZE_T_SIZE);
-    // }
 
     size_t asize;
     size_t extendsize;
@@ -203,6 +251,57 @@ void mm_free(void *ptr)
     PUT(HDRP(ptr),PACK(size,0));
     PUT(FTRP(ptr),PACK(size,0));
     coalesce(ptr);
+
+}
+
+void delete_block(char* bp){
+     int seg_list_num = get_seg_list_num(GET_SIZE(HDRP(bp)));
+
+    //  // Select segregated list 
+    // while ((seg_list_num < LIST_NUM - 1) && (size > 1)) {
+    //     size >>= 1;
+    //     seg_list_num++;
+    // }
+
+    if(GET(PRED(bp)) == NULL){ //내가 리스트 맨앞이다.
+        if(GET(SUCC(bp)) == NULL){
+            seg_list[seg_list_num] = NULL;
+        }else{
+            PUT(PRED(GET(SUCC(bp))),NULL); 
+            seg_list[seg_list_num] = GET(SUCC(bp));
+        }
+    }else{
+        if(GET(SUCC(bp)) == NULL){
+            PUT(SUCC(GET(PRED(bp))),NULL);
+        }else{
+            PUT(PRED(GET(SUCC(bp))),GET(PRED(bp)));
+            PUT(SUCC(GET(PRED(bp))),GET(SUCC(bp)));
+        }
+    }
+
+    return;
+}
+
+void add_free_block(char* bp){ // 해제된 블럭 알맞은 크기 리스트에 넣어주기
+    int seg_list_num = get_seg_list_num(GET_SIZE(HDRP(bp)));
+    if(seg_list[seg_list_num] == NULL){
+        PUT(PRED(bp),NULL);
+        PUT(SUCC(bp),NULL);
+    }else {
+        PUT(PRED(bp),NULL); // 맨앞에 넣어주기
+        PUT(SUCC(bp),seg_list[seg_list_num]);
+        PUT(PRED(seg_list[seg_list_num]),bp);
+    }
+    seg_list[seg_list_num] = bp; //맨앞주소로 저장
+}
+
+int get_seg_list_num(size_t size){
+    int i = -4; //seg_list[0]은 블록의 최소 크기인 2**4를 위한 리스트 
+    while (size != 1){
+        size = (size >> 1);
+        i++;
+    }
+    return i;
 }
 
 /*
