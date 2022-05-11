@@ -38,7 +38,7 @@ team_t team = {
 
 #define WSIZE  4
 #define DSIZE  8
-#define CHUNKSIZE (1<<10)
+#define CHUNKSIZE (1<<12)
 
 #define MAX(x,y) ((x) > (y) ? (x) : (y))
 
@@ -139,7 +139,7 @@ int mm_init(void)
     
     free_listp = heap_listp + DSIZE; //가용리스트 첫번째
 
-    if(extend_heap(4) == NULL)
+    if(extend_heap(CHUNKSIZE/WSIZE) == NULL)
         return -1;
     return 0;
 }

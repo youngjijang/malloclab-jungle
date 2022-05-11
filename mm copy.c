@@ -38,7 +38,7 @@ team_t team = {
 
 #define WSIZE  4
 #define DSIZE  8
-#define CHUNKSIZE (1<<10)
+#define CHUNKSIZE (1<<12)
 
 #define MAX(x,y) ((x) > (y) ? (x) : (y))
 
@@ -60,6 +60,7 @@ team_t team = {
 #define SUCC_FREEP(bp) (*(void**)(bp + WSIZE)) //*(GET(SUCC_FREEP(bp))) == successor
 
 static char *heap_listp; /* 처음 쓸 큰 가용블럭 힙을 만들어준다.*/
+static char *next_listp;
 static char *free_listp; /* 가용리스트의 첫번째 주소를 저장*/
 
 void removeBlock(char *bp);
@@ -74,11 +75,9 @@ static void *coalesce(void *bp){
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
 
-    if(prev_alloc && next_alloc){ /* case 1 */
-        putFreeBlock(bp);
-        return bp;  
-    }
-    else if (prev_alloc && !next_alloc){ /* case 2 */
+    // void *temp = bp;
+
+    if (prev_alloc && !next_alloc){ /* case 2 */
         removeBlock(NEXT_BLKP(bp));
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp),PACK(size,0));
@@ -90,17 +89,18 @@ static void *coalesce(void *bp){
         PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
         PUT(FTRP(bp),PACK(size,0));
         bp = PREV_BLKP(bp);
+
     }
-    else{ /* case 4 */
+    else if(!prev_alloc && !next_alloc){ /* case 4 */
         removeBlock(NEXT_BLKP(bp));
         removeBlock(PREV_BLKP(bp));
         size += GET_SIZE(HDRP(PREV_BLKP(bp)))+GET_SIZE(FTRP(NEXT_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
         PUT(FTRP(NEXT_BLKP(bp)),PACK(size,0));
         bp = PREV_BLKP(bp);
+        
     }
-
-    putFreeBlock(bp);
+    putFreeBlock(bp); /*case1*/
     return bp;
 }
 
@@ -138,16 +138,22 @@ int mm_init(void)
     PUT(heap_listp + (5*WSIZE),PACK(0,1));/* 에필로그 헤더*/
     
     free_listp = heap_listp + DSIZE; //가용리스트 첫번째
-
-    if(extend_heap(4) == NULL)
+    next_listp = free_listp;
+    if(extend_heap(CHUNKSIZE/WSIZE) == NULL)
         return -1;
     return 0;
 }
 
 static void *find_fit(size_t asize){
-    void *bp;
 
-    for(bp = free_listp; GET_ALLOC(HDRP(bp)) != 1; bp = SUCC_FREEP(bp)){
+    void *bp;
+    for(bp = next_listp; GET_ALLOC(HDRP(bp)) != 1; bp = SUCC_FREEP(bp)){
+        if(asize <= GET_SIZE(HDRP(bp))){
+            return bp;
+        }
+    }
+
+    for(bp = free_listp; bp < next_listp; bp = SUCC_FREEP(bp)){
         if(asize <= GET_SIZE(HDRP(bp))){
             return bp;
         }
@@ -182,7 +188,6 @@ static void place(void *bp, size_t asize){
  */
 void *mm_malloc(size_t size)
 {
-    
     size_t asize;
     size_t extendsize;
     char *bp;
@@ -233,6 +238,7 @@ void removeBlock(char *bp){
         SUCC_FREEP(PREC_FREEP(bp)) = SUCC_FREEP(bp);
         PREC_FREEP(SUCC_FREEP(bp)) = PREC_FREEP(bp);
     }    
+    next_listp = SUCC_FREEP(bp);
 }
 
 /*

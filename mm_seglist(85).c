@@ -38,7 +38,7 @@ team_t team = {
 
 #define WSIZE  4
 #define DSIZE  8
-#define CHUNKSIZE (1<<12)
+#define CHUNKSIZE (1<<10)
 
 #define MAX(x,y) ((x) > (y) ? (x) : (y))
 
@@ -155,17 +155,19 @@ int mm_init(void)
 static void *find_fit(size_t asize){
     void *bp;
     int i = get_seg_list_num(asize); //알맞은 segsize 찾기
-
-    //리스트 내부의 블록들중 가장 작은 블록 할당(best fit)
     void *tmp = NULL;
+
     while (i < LIST_NUM){
-        //first fit
+
+        //first-fit
         for(bp = seg_list[i]; bp != NULL; bp = GET(SUCC(bp))){
             if(asize <= GET_SIZE(HDRP(bp))){
                 tmp = bp;
+                break;
             }
         }
-
+        //리스트 내부의 블록들중 가장 작은 블록 할당
+        //best-fit 인데 성능은 비슷
         // for(bp = seg_list[i]; bp != NULL; bp = GET(SUCC(bp))){
         //     if(asize <= GET_SIZE(HDRP(bp))){
         //         if (tmp == NULL){

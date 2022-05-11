@@ -38,7 +38,7 @@ team_t team = {
 
 #define WSIZE  4
 #define DSIZE  8
-#define CHUNKSIZE (1<<10)
+#define CHUNKSIZE (1<<12)
 
 #define MAX(x,y) ((x) > (y) ? (x) : (y))
 
@@ -56,15 +56,7 @@ team_t team = {
 #define NEXT_BLKP(bp) ((char*)(bp) + GET_SIZE(((char*)(bp) - WSIZE)))
 #define PREV_BLKP(bp) ((char*)(bp) - GET_SIZE(((char*)(bp) - DSIZE))) //괄호 주의
 
-#define PREC_FREEP(bp) (*(void**)(bp)) //*(GET(PREC_FREEP(bp))) == preducessor
-#define SUCC_FREEP(bp) (*(void**)(bp + WSIZE)) //*(GET(SUCC_FREEP(bp))) == successor
-
 static char *heap_listp; /* 처음 쓸 큰 가용블럭 힙을 만들어준다.*/
-static char *free_listp; /* 가용리스트의 첫번째 주소를 저장*/
-
-void removeBlock(char *bp);
-void putFreeBlock(char *bp);
-
 
 /*
 * 연결
@@ -75,32 +67,26 @@ static void *coalesce(void *bp){
     size_t size = GET_SIZE(HDRP(bp));
 
     if(prev_alloc && next_alloc){ /* case 1 */
-        putFreeBlock(bp);
         return bp;  
     }
     else if (prev_alloc && !next_alloc){ /* case 2 */
-        removeBlock(NEXT_BLKP(bp));
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp),PACK(size,0));
         PUT(FTRP(bp),PACK(size,0)); //푸터 안바꾸나?
     }
     else if (!prev_alloc && next_alloc){ /* case 3 */
-        removeBlock(PREV_BLKP(bp));
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
         PUT(FTRP(bp),PACK(size,0));
         bp = PREV_BLKP(bp);
     }
     else{ /* case 4 */
-        removeBlock(NEXT_BLKP(bp));
-        removeBlock(PREV_BLKP(bp));
         size += GET_SIZE(HDRP(PREV_BLKP(bp)))+GET_SIZE(FTRP(NEXT_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
         PUT(FTRP(NEXT_BLKP(bp)),PACK(size,0));
         bp = PREV_BLKP(bp);
     }
 
-    putFreeBlock(bp);
     return bp;
 }
 
@@ -117,7 +103,6 @@ static void *extend_heap(size_t words){ //static void 리턴 뭐야
 
     PUT(HDRP(bp),PACK(size,0));
     PUT(FTRP(bp),PACK(size,0));
-    
     PUT(HDRP(NEXT_BLKP(bp)),PACK(0,1));
 
     return coalesce(bp);
@@ -128,18 +113,15 @@ static void *extend_heap(size_t words){ //static void 리턴 뭐야
  */
 int mm_init(void)
 {
-    if ((heap_listp = mem_sbrk(6*WSIZE)) == (void*)-1)
+    if ((heap_listp = mem_sbrk(4*WSIZE)) == (void*)-1)
         return -1;
     PUT(heap_listp,0);
-    PUT(heap_listp + (1*WSIZE),PACK(2*DSIZE,1));/* 프롤로그 헤더*/
-    PUT(heap_listp + (2*WSIZE),NULL);/* 연결리스트 끝점 pre*/
-    PUT(heap_listp + (3*WSIZE),NULL);/* 연결리스트 끝점 suc = 항상 NULL*/
-    PUT(heap_listp + (4*WSIZE),PACK(2*DSIZE,1));/* 프롤로그 푸터*/
-    PUT(heap_listp + (5*WSIZE),PACK(0,1));/* 에필로그 헤더*/
-    
-    free_listp = heap_listp + DSIZE; //가용리스트 첫번째
+    PUT(heap_listp + (1*WSIZE),PACK(DSIZE,1));/* 프롤로그 헤더*/
+    PUT(heap_listp + (2*WSIZE),PACK(DSIZE,1));/* 프롤로그 푸터*/
+    PUT(heap_listp + (3*WSIZE),PACK(0,1));/* 에필로그 헤더*/
+    heap_listp += (2*WSIZE);
 
-    if(extend_heap(4) == NULL)
+    if(extend_heap(CHUNKSIZE/WSIZE) == NULL)
         return -1;
     return 0;
 }
@@ -147,8 +129,8 @@ int mm_init(void)
 static void *find_fit(size_t asize){
     void *bp;
 
-    for(bp = free_listp; GET_ALLOC(HDRP(bp)) != 1; bp = SUCC_FREEP(bp)){
-        if(asize <= GET_SIZE(HDRP(bp))){
+    for(bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)){
+        if(!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))){
             return bp;
         }
     }
@@ -159,16 +141,12 @@ static void *find_fit(size_t asize){
 static void place(void *bp, size_t asize){
     size_t csize = GET_SIZE(HDRP(bp));
 
-    removeBlock(bp); // 할당될거니까 가용리스트 블럭 해제해주기
     if((csize - asize) >= (2*DSIZE)){
         PUT(HDRP(bp),PACK(asize,1));
         PUT(FTRP(bp),PACK(asize,1));
         bp = NEXT_BLKP(bp);
         PUT(HDRP(bp), PACK(csize-asize,0));
         PUT(FTRP(bp), PACK(csize-asize,0));
-
-        putFreeBlock(bp);
-        //자를 부분 새 가용블럭 만들어 연결해주기
     }
     else{
         PUT(HDRP(bp), PACK(csize,1));
@@ -182,7 +160,15 @@ static void place(void *bp, size_t asize){
  */
 void *mm_malloc(size_t size)
 {
-    
+    // int newsize = ALIGN(size + SIZE_T_SIZE);
+    // void *p = mem_sbrk(newsize);
+    // if (p == (void *)-1)
+	// return NULL;
+    // else {
+    //     *(size_t *)p = size;
+    //     return (void *)((char *)p + SIZE_T_SIZE);
+    // }
+
     size_t asize;
     size_t extendsize;
     char *bp;
@@ -217,33 +203,6 @@ void mm_free(void *ptr)
     PUT(HDRP(ptr),PACK(size,0));
     PUT(FTRP(ptr),PACK(size,0));
     coalesce(ptr);
-
-    // putFreeBlock(ptr); coal에서 다 연결됨?
-}
-
-/**
- * 가용 블럭 제거
- */
-void removeBlock(char *bp){ 
-
-    if(bp == free_listp){
-        PREC_FREEP(SUCC_FREEP(bp)) = NULL;
-        free_listp = SUCC_FREEP(bp);
-    }else{
-        SUCC_FREEP(PREC_FREEP(bp)) = SUCC_FREEP(bp);
-        PREC_FREEP(SUCC_FREEP(bp)) = PREC_FREEP(bp);
-    }    
-}
-
-/*
-* 새로 생성된 가용블럭을 가용리스트 맨 앞에 추가해주기
-*/
-void putFreeBlock(char *bp){
-    PREC_FREEP(bp) = NULL;
-    SUCC_FREEP(bp) = free_listp;
-    PREC_FREEP(free_listp) = bp;
-
-    free_listp = bp;
 }
 
 /*
